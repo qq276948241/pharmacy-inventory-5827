@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>社区药房库存与销售系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">💊</span>
+                <h2>药房管理系统</h2>
+            </div>
+            <nav class="nav-menu">
+                <router-link to="/" class="nav-item">
+                    <span class="nav-icon">📋</span>
+                    <span>药品目录</span>
+                </router-link>
+                <router-link to="/stock-in" class="nav-item">
+                    <span class="nav-icon">📥</span>
+                    <span>入库登记</span>
+                </router-link>
+                <router-link to="/sales" class="nav-item">
+                    <span class="nav-icon">🛒</span>
+                    <span>销售开单</span>
+                </router-link>
+                <router-link to="/warning" class="nav-item">
+                    <span class="nav-icon">⚠️</span>
+                    <span>库存预警</span>
+                </router-link>
+                <router-link to="/statistics" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    <span>销售统计</span>
+                </router-link>
+            </nav>
+        </div>
+        <div class="main-content">
+            <header class="top-header">
+                <div class="header-title">
+                    <h1>{{ pageTitle }}</h1>
+                </div>
+                <div class="header-user">
+                    <span class="user-icon">👤</span>
+                    <span>管理员</span>
+                </div>
+            </header>
+            <div class="content-area">
+                <router-view></router-view>
+            </div>
+        </div>
+    </div>
+    <script src="js/app.js"></script>
+</body>
+</html>
