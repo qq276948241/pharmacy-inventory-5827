@@ -299,13 +299,21 @@ const StockIn = {
                 </div>
                 <div class="form-row">
                     <div class="form-group">
+                        <label>批次号</label>
+                        <input type="text" v-model="stockInForm.batch_no" placeholder="请输入批次号">
+                    </div>
+                    <div class="form-group">
+                        <label>有效期</label>
+                        <input type="date" v-model="stockInForm.expiry_date">
+                    </div>
+                    <div class="form-group">
                         <label>操作人</label>
                         <input type="text" v-model="stockInForm.operator" placeholder="请输入操作人姓名">
                     </div>
-                    <div class="form-group">
-                        <label>备注</label>
-                        <input type="text" v-model="stockInForm.remark" placeholder="选填">
-                    </div>
+                </div>
+                <div class="form-group">
+                    <label>备注</label>
+                    <input type="text" v-model="stockInForm.remark" placeholder="选填">
                 </div>
                 <div style="text-align: right;">
                     <button class="btn btn-success" @click="submitStockIn">确认入库</button>
@@ -319,7 +327,7 @@ const StockIn = {
                         type="text" 
                         class="search-input" 
                         v-model="searchKeyword" 
-                        placeholder="搜索药品名称..."
+                        placeholder="搜索药品名称或批次号..."
                         @keyup.enter="loadStockInList"
                     >
                 </div>
@@ -329,6 +337,8 @@ const StockIn = {
                             <th>ID</th>
                             <th>药品名称</th>
                             <th>规格</th>
+                            <th>批次号</th>
+                            <th>有效期</th>
                             <th>数量</th>
                             <th>单价</th>
                             <th>操作人</th>
@@ -341,6 +351,8 @@ const StockIn = {
                             <td>{{ item.id }}</td>
                             <td>{{ item.medicine_name }}</td>
                             <td>{{ item.specification }}</td>
+                            <td><code style="background: #f5f5f5; padding: 2px 6px; border-radius: 4px;">{{ item.batch_no || '-' }}</code></td>
+                            <td>{{ item.expiry_date || '-' }}</td>
                             <td class="text-green">+{{ item.quantity }} {{ item.unit }}</td>
                             <td>¥{{ item.unit_price.toFixed(2) }}</td>
                             <td>{{ item.operator }}</td>
@@ -348,7 +360,7 @@ const StockIn = {
                             <td>{{ item.remark || '-' }}</td>
                         </tr>
                         <tr v-if="stockInList.length === 0">
-                            <td colspan="8" class="empty">暂无数据</td>
+                            <td colspan="10" class="empty">暂无数据</td>
                         </tr>
                     </tbody>
                 </table>
@@ -379,6 +391,8 @@ const StockIn = {
             medicine_id: '',
             quantity: 1,
             unit_price: 0,
+            batch_no: '',
+            expiry_date: '',
             operator: '管理员',
             remark: ''
         });
@@ -418,6 +432,8 @@ const StockIn = {
                     medicine_id: stockInForm.medicine_id,
                     quantity: stockInForm.quantity,
                     unit_price: stockInForm.unit_price,
+                    batch_no: stockInForm.batch_no,
+                    expiry_date: stockInForm.expiry_date,
                     operator: stockInForm.operator,
                     remark: stockInForm.remark
                 });
@@ -425,6 +441,8 @@ const StockIn = {
                 stockInForm.medicine_id = '';
                 stockInForm.quantity = 1;
                 stockInForm.unit_price = 0;
+                stockInForm.batch_no = '';
+                stockInForm.expiry_date = '';
                 stockInForm.remark = '';
                 loadStockInList();
                 loadMedicines();
@@ -726,7 +744,7 @@ const StockWarning = {
                 <div class="stat-card">
                     <div class="stat-icon orange">💰</div>
                     <div class="stat-info">
-                        <h3>¥{{ inventoryStats.total_value.toFixed(2) }}</h3>
+                        <h3>¥{{ (inventoryStats.total_value || 0).toFixed(2) }}</h3>
                         <p>库存总价值</p>
                     </div>
                 </div>
@@ -735,6 +753,37 @@ const StockWarning = {
                     <div class="stat-info">
                         <h3>{{ inventoryStats.low_stock_count }}</h3>
                         <p>库存预警</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-cards">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #fff7e6;">🟡</div>
+                    <div class="stat-info">
+                        <h3 style="color: #fa8c16;">{{ inventoryStats.expiry_3month_count || 0 }}</h3>
+                        <p>3个月内近效期</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #fff1f0;">🔴</div>
+                    <div class="stat-info">
+                        <h3 style="color: #ff4d4f;">{{ inventoryStats.expiry_1month_count || 0 }}</h3>
+                        <p>1个月内临期</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #fffbe6;">📦</div>
+                    <div class="stat-info">
+                        <h3>{{ inventoryStats.expiry_3month_qty || 0 }}</h3>
+                        <p>近效期数量</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background-color: #f9f0ff;">💵</div>
+                    <div class="stat-info">
+                        <h3>¥{{ expiryValue.toFixed(2) }}</h3>
+                        <p>近效期货值</p>
                     </div>
                 </div>
             </div>
@@ -777,6 +826,64 @@ const StockWarning = {
                         <tr v-if="lowStockMedicines.length === 0">
                             <td colspan="10" class="empty">
                                 <span style="color: #52c41a;">✅ 所有药品库存正常，暂无预警</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">⏰ 近效期预警</span>
+                    <div class="flex-gap">
+                        <select class="search-select" v-model="expiryFilter" @change="loadExpiryWarning">
+                            <option value="all">全部近效期</option>
+                            <option value="critical">1个月内（临期）</option>
+                            <option value="warning">1-3个月（近效期）</option>
+                            <option value="expired">已过期</option>
+                        </select>
+                    </div>
+                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>药品名称</th>
+                            <th>规格</th>
+                            <th>批次号</th>
+                            <th>有效期</th>
+                            <th>剩余天数</th>
+                            <th>剩余库存</th>
+                            <th>单价</th>
+                            <th>库存价值</th>
+                            <th>预警级别</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr 
+                            v-for="item in filteredExpiryMedicines" 
+                            :key="item.id"
+                            :style="{ backgroundColor: getExpiryBgColor(item.warning_level) }"
+                        >
+                            <td>{{ item.medicine_name }}</td>
+                            <td>{{ item.specification }}</td>
+                            <td><code style="background: #f5f5f5; padding: 2px 6px; border-radius: 4px;">{{ item.batch_no }}</code></td>
+                            <td>{{ item.expiry_date }}</td>
+                            <td :class="getExpiryTextClass(item.warning_level)" style="font-weight: 600;">
+                                <span v-if="item.days_remaining <= 0">已过期 {{ -item.days_remaining }} 天</span>
+                                <span v-else>{{ item.days_remaining }} 天</span>
+                            </td>
+                            <td>{{ item.quantity }} {{ item.unit }}</td>
+                            <td>¥{{ item.price.toFixed(2) }}</td>
+                            <td>¥{{ (item.quantity * item.price).toFixed(2) }}</td>
+                            <td>
+                                <span class="badge" :class="getExpiryBadgeClass(item.warning_level)">
+                                    {{ item.warning_label }}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr v-if="filteredExpiryMedicines.length === 0">
+                            <td colspan="9" class="empty">
+                                <span style="color: #52c41a;">✅ 暂无近效期药品</span>
                             </td>
                         </tr>
                     </tbody>
@@ -848,6 +955,16 @@ const StockWarning = {
                             <label>入库数量</label>
                             <input type="number" v-model.number="stockInQty" min="1" placeholder="请输入数量">
                         </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>批次号</label>
+                                <input type="text" v-model="stockInBatchNo" placeholder="请输入批次号">
+                            </div>
+                            <div class="form-group">
+                                <label>有效期</label>
+                                <input type="date" v-model="stockInExpiryDate">
+                            </div>
+                        </div>
                         <div class="form-group">
                             <label>操作人</label>
                             <input type="text" v-model="stockInOperator" placeholder="请输入操作人">
@@ -870,17 +987,61 @@ const StockWarning = {
             medicine_count: 0,
             total_stock: 0,
             total_value: 0,
-            low_stock_count: 0
+            low_stock_count: 0,
+            expiry_1month_count: 0,
+            expiry_3month_count: 0
         });
         const lowStockMedicines = ref([]);
+        const expiryMedicines = ref([]);
         const allMedicines = ref([]);
         const keyword = ref('');
         const sortBy = ref('stock_asc');
+        const expiryFilter = ref('all');
 
         const showStockInModal = ref(false);
         const selectedMedicine = ref(null);
         const stockInQty = ref(10);
+        const stockInBatchNo = ref('');
+        const stockInExpiryDate = ref('');
         const stockInOperator = ref('管理员');
+
+        const filteredExpiryMedicines = computed(() => {
+            if (expiryFilter.value === 'all') return expiryMedicines.value;
+            return expiryMedicines.value.filter(item => item.warning_level === expiryFilter.value);
+        });
+
+        const expiryValue = computed(() => {
+            return expiryMedicines.value.reduce((sum, item) => {
+                return sum + (item.quantity * item.price);
+            }, 0);
+        });
+
+        const getExpiryBgColor = (level) => {
+            const colors = {
+                'expired': '#fff1f0',
+                'critical': '#fff7e6',
+                'warning': '#fffbe6'
+            };
+            return colors[level] || '';
+        };
+
+        const getExpiryTextClass = (level) => {
+            const classes = {
+                'expired': 'text-red',
+                'critical': 'text-red',
+                'warning': 'text-orange'
+            };
+            return classes[level] || '';
+        };
+
+        const getExpiryBadgeClass = (level) => {
+            const classes = {
+                'expired': 'badge-danger',
+                'critical': 'badge-danger',
+                'warning': 'badge-warning'
+            };
+            return classes[level] || '';
+        };
 
         const loadStats = async () => {
             try {
@@ -893,6 +1054,13 @@ const StockWarning = {
             try {
                 const data = await apiGet('/medicines/low-stock');
                 lowStockMedicines.value = data;
+            } catch (e) {}
+        };
+
+        const loadExpiryWarning = async () => {
+            try {
+                const data = await apiGet('/medicines/expiry-warning', { days: 90 });
+                expiryMedicines.value = data;
             } catch (e) {}
         };
 
@@ -916,6 +1084,8 @@ const StockWarning = {
         const quickStockIn = (med) => {
             selectedMedicine.value = med;
             stockInQty.value = Math.max(med.threshold - med.stock + 5, 10);
+            stockInBatchNo.value = '';
+            stockInExpiryDate.value = '';
             showStockInModal.value = true;
         };
 
@@ -935,12 +1105,15 @@ const StockWarning = {
                     quantity: stockInQty.value,
                     unit_price: selectedMedicine.value.price,
                     operator: stockInOperator.value,
+                    batch_no: stockInBatchNo.value,
+                    expiry_date: stockInExpiryDate.value,
                     remark: '快速入库（库存预警）'
                 });
                 alert('入库成功');
                 closeStockInModal();
                 loadStats();
                 loadLowStock();
+                loadExpiryWarning();
                 loadAllMedicines();
             } catch (e) {
                 alert(e.message);
@@ -950,15 +1123,18 @@ const StockWarning = {
         onMounted(() => {
             loadStats();
             loadLowStock();
+            loadExpiryWarning();
             loadAllMedicines();
         });
 
         return {
-            inventoryStats, lowStockMedicines, allMedicines,
-            keyword, sortBy,
-            showStockInModal, selectedMedicine, stockInQty, stockInOperator,
+            inventoryStats, lowStockMedicines, expiryMedicines, allMedicines,
+            keyword, sortBy, expiryFilter,
+            filteredExpiryMedicines, expiryValue,
+            getExpiryBgColor, getExpiryTextClass, getExpiryBadgeClass,
+            showStockInModal, selectedMedicine, stockInQty, stockInBatchNo, stockInExpiryDate, stockInOperator,
             quickStockIn, closeStockInModal, confirmStockIn,
-            loadAllMedicines
+            loadAllMedicines, loadExpiryWarning
         };
     }
 };

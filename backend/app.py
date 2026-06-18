@@ -55,6 +55,21 @@ def init_db():
             operator TEXT NOT NULL,
             operation_time TEXT DEFAULT (datetime('now', 'localtime')),
             remark TEXT,
+            batch_no TEXT,
+            expiry_date TEXT,
+            FOREIGN KEY (medicine_id) REFERENCES medicines (id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS inventory_batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            medicine_id INTEGER NOT NULL,
+            batch_no TEXT NOT NULL,
+            expiry_date TEXT,
+            quantity INTEGER NOT NULL DEFAULT 0,
+            initial_quantity INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
             FOREIGN KEY (medicine_id) REFERENCES medicines (id)
         )
     ''')
@@ -97,10 +112,31 @@ def init_db():
             )
 
         cursor.execute('''
-            INSERT INTO stock_in (medicine_id, quantity, unit_price, operator, remark, operation_time)
-            VALUES (1, 50, 12.0, '系统初始化', '初始库存', '2026-06-01 09:00:00'),
-                   (2, 30, 18.0, '系统初始化', '初始库存', '2026-06-01 09:00:00'),
-                   (3, 100, 8.0, '系统初始化', '初始库存', '2026-06-01 09:00:00')
+            INSERT INTO stock_in (medicine_id, quantity, unit_price, operator, remark, operation_time, batch_no, expiry_date)
+            VALUES (1, 50, 12.0, '系统初始化', '初始库存', '2026-06-01 09:00:00', 'AMX20250601', '2027-06-30'),
+                   (2, 30, 18.0, '系统初始化', '初始库存', '2026-06-01 09:00:00', 'BLF20251215', '2026-08-20'),
+                   (3, 100, 8.0, '系统初始化', '初始库存', '2026-06-01 09:00:00', 'GML20260101', '2026-07-15'),
+                   (4, 20, 3.5, '系统初始化', '初始库存', '2026-05-15 09:00:00', 'VIT20240820', '2026-07-20'),
+                   (5, 15, 38.0, '系统初始化', '初始库存', '2026-04-20 09:00:00', 'OME20250910', '2026-12-31'),
+                   (6, 20, 28.0, '系统初始化', '初始库存', '2026-03-10 09:00:00', 'XBD20250301', '2026-09-15'),
+                   (7, 10, 15.0, '系统初始化', '初始库存', '2026-02-20 09:00:00', 'EJS20250520', '2026-07-05'),
+                   (8, 30, 22.0, '系统初始化', '初始库存', '2026-01-15 09:00:00', 'LLT20251101', '2027-01-20'),
+                   (9, 5, 16.0, '系统初始化', '初始库存', '2026-05-25 09:00:00', 'MTS20250610', '2026-06-25'),
+                   (10, 20, 32.0, '系统初始化', '初始库存', '2026-06-10 09:00:00', 'ZYF20260201', '2028-02-28')
+        ''')
+
+        cursor.execute('''
+            INSERT INTO inventory_batches (medicine_id, batch_no, expiry_date, quantity, initial_quantity, created_at)
+            VALUES (1, 'AMX20250601', '2027-06-30', 44, 50, '2026-06-01 09:00:00'),
+                   (2, 'BLF20251215', '2026-08-20', 27, 30, '2026-06-01 09:00:00'),
+                   (3, 'GML20260101', '2026-07-15', 91, 100, '2026-06-01 09:00:00'),
+                   (4, 'VIT20240820', '2026-07-20', 17, 20, '2026-05-15 09:00:00'),
+                   (5, 'OME20250910', '2026-12-31', 14, 15, '2026-04-20 09:00:00'),
+                   (6, 'XBD20250301', '2026-09-15', 18, 20, '2026-03-10 09:00:00'),
+                   (7, 'EJS20250520', '2026-07-05', 8, 10, '2026-02-20 09:00:00'),
+                   (8, 'LLT20251101', '2027-01-20', 27, 30, '2026-01-15 09:00:00'),
+                   (9, 'MTS20250610', '2026-06-25', 3, 5, '2026-05-25 09:00:00'),
+                   (10, 'ZYF20260201', '2028-02-28', 19, 20, '2026-06-10 09:00:00')
         ''')
 
         cursor.execute('''
@@ -257,8 +293,8 @@ def get_stock_in():
     params = []
 
     if keyword:
-        query += ' AND m.name LIKE ?'
-        params.append(f'%{keyword}%')
+        query += ' AND (m.name LIKE ? OR si.batch_no LIKE ?)'
+        params.extend([f'%{keyword}%', f'%{keyword}%'])
 
     query += ' ORDER BY si.operation_time DESC LIMIT ? OFFSET ?'
     params.extend([per_page, (page - 1) * per_page])
@@ -270,8 +306,8 @@ def get_stock_in():
     count_query = 'SELECT COUNT(*) as total FROM stock_in si LEFT JOIN medicines m ON si.medicine_id = m.id WHERE 1=1'
     count_params = []
     if keyword:
-        count_query += ' AND m.name LIKE ?'
-        count_params.append(f'%{keyword}%')
+        count_query += ' AND (m.name LIKE ? OR si.batch_no LIKE ?)'
+        count_params.extend([f'%{keyword}%', f'%{keyword}%'])
     total = db.execute(count_query, count_params).fetchone()['total']
 
     return jsonify({'list': result, 'total': total, 'page': page, 'per_page': per_page})
@@ -285,6 +321,8 @@ def create_stock_in():
     unit_price = data.get('unit_price', 0)
     operator = data.get('operator', DEFAULT_OPERATOR)
     remark = data.get('remark', '')
+    batch_no = data.get('batch_no', '')
+    expiry_date = data.get('expiry_date', '')
 
     if not medicine_id or quantity <= 0:
         return jsonify({'error': '药品和数量不能为空'}), 400
@@ -296,9 +334,26 @@ def create_stock_in():
         return jsonify({'error': '药品不存在'}), 404
 
     db.execute('''
-        INSERT INTO stock_in (medicine_id, quantity, unit_price, operator, remark)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (medicine_id, quantity, unit_price, operator, remark))
+        INSERT INTO stock_in (medicine_id, quantity, unit_price, operator, remark, batch_no, expiry_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (medicine_id, quantity, unit_price, operator, remark, batch_no, expiry_date))
+
+    if batch_no:
+        existing_batch = db.execute(
+            'SELECT * FROM inventory_batches WHERE medicine_id=? AND batch_no=?',
+            (medicine_id, batch_no)
+        ).fetchone()
+        if existing_batch:
+            db.execute('''
+                UPDATE inventory_batches 
+                SET quantity = quantity + ?, initial_quantity = initial_quantity + ?
+                WHERE id = ?
+            ''', (quantity, quantity, existing_batch['id']))
+        else:
+            db.execute('''
+                INSERT INTO inventory_batches (medicine_id, batch_no, expiry_date, quantity, initial_quantity)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (medicine_id, batch_no, expiry_date, quantity, quantity))
 
     db.execute('''
         UPDATE medicines 
@@ -545,12 +600,92 @@ def get_inventory_value():
         FROM medicines
     ''')
     row = cursor.fetchone()
+
+    today = datetime.now().strftime('%Y-%m-%d')
+    one_month = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+    three_months = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+
+    expiry_cursor = db.execute('''
+        SELECT 
+            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_1month,
+            SUM(CASE WHEN expiry_date <= ? AND expiry_date > ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_3month,
+            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_1month_qty,
+            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_3month_qty
+        FROM inventory_batches
+    ''', (one_month, three_months, one_month, one_month, three_months))
+    expiry_row = expiry_cursor.fetchone()
+
     return jsonify({
         'medicine_count': row['medicine_count'] or 0,
         'total_stock': row['total_stock'] or 0,
         'total_value': round(row['total_value'] or 0, 2),
-        'low_stock_count': row['low_stock_count'] or 0
+        'low_stock_count': row['low_stock_count'] or 0,
+        'expiry_1month_count': expiry_row['expiry_1month'] or 0,
+        'expiry_1month_qty': expiry_row['expiry_1month_qty'] or 0,
+        'expiry_3month_count': (expiry_row['expiry_1month'] or 0) + (expiry_row['expiry_3month'] or 0),
+        'expiry_3month_qty': expiry_row['expiry_3month_qty'] or 0
     })
+
+
+@app.route('/api/medicines/expiry-warning', methods=['GET'])
+def get_expiry_warning():
+    db = get_db()
+    days = int(request.args.get('days', 90))
+
+    today = datetime.now()
+    today_str = today.strftime('%Y-%m-%d')
+    limit_date = (today + timedelta(days=days)).strftime('%Y-%m-%d')
+
+    cursor = db.execute('''
+        SELECT 
+            ib.id,
+            ib.medicine_id,
+            ib.batch_no,
+            ib.expiry_date,
+            ib.quantity,
+            ib.initial_quantity,
+            m.name as medicine_name,
+            m.specification,
+            m.unit,
+            m.price,
+            m.category
+        FROM inventory_batches ib
+        LEFT JOIN medicines m ON ib.medicine_id = m.id
+        WHERE ib.expiry_date IS NOT NULL 
+          AND ib.expiry_date <= ? 
+          AND ib.quantity > 0
+        ORDER BY ib.expiry_date ASC
+    ''', (limit_date,))
+
+    rows = cursor.fetchall()
+    result = []
+    for row in rows:
+        row_dict = dict(row)
+        if row_dict['expiry_date']:
+            expiry_dt = datetime.strptime(row_dict['expiry_date'], '%Y-%m-%d')
+            days_remaining = (expiry_dt - today).days
+            row_dict['days_remaining'] = days_remaining
+
+            if days_remaining <= 0:
+                row_dict['warning_level'] = 'expired'
+                row_dict['warning_label'] = '已过期'
+            elif days_remaining <= 30:
+                row_dict['warning_level'] = 'critical'
+                row_dict['warning_label'] = '临期(1个月内)'
+            elif days_remaining <= 90:
+                row_dict['warning_level'] = 'warning'
+                row_dict['warning_label'] = '近效期(3个月内)'
+            else:
+                row_dict['warning_level'] = 'normal'
+                row_dict['warning_label'] = '正常'
+        else:
+            row_dict['days_remaining'] = None
+            row_dict['warning_level'] = 'unknown'
+            row_dict['warning_label'] = '未知'
+
+        result.append(row_dict)
+
+    return jsonify(result)
 
 
 if __name__ == '__main__':
