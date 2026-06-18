@@ -10,6 +10,81 @@ CORS(app)
 DATABASE = 'pharmacy.db'
 DEFAULT_OPERATOR = '管理员'
 
+EXPIRY_CRITICAL_DAYS = 30
+EXPIRY_WARNING_DAYS = 90
+
+WARNING_LEVEL_EXPIRED = 'expired'
+WARNING_LEVEL_CRITICAL = 'critical'
+WARNING_LEVEL_WARNING = 'warning'
+WARNING_LEVEL_NORMAL = 'normal'
+WARNING_LEVEL_UNKNOWN = 'unknown'
+
+WARNING_LABELS = {
+    WARNING_LEVEL_EXPIRED: '已过期',
+    WARNING_LEVEL_CRITICAL: '临期(1个月内)',
+    WARNING_LEVEL_WARNING: '近效期(3个月内)',
+    WARNING_LEVEL_NORMAL: '正常',
+    WARNING_LEVEL_UNKNOWN: '未知',
+}
+
+
+def get_today():
+    today = datetime.now()
+    return today, today.strftime('%Y-%m-%d')
+
+
+def get_expiry_thresholds(today_dt=None):
+    if today_dt is None:
+        today_dt, _ = get_today()
+    return {
+        'today_str': today_dt.strftime('%Y-%m-%d'),
+        'critical_date': (today_dt + timedelta(days=EXPIRY_CRITICAL_DAYS)).strftime('%Y-%m-%d'),
+        'warning_date': (today_dt + timedelta(days=EXPIRY_WARNING_DAYS)).strftime('%Y-%m-%d'),
+    }
+
+
+def calc_expiry_info(expiry_date_str, today_dt=None):
+    if not expiry_date_str:
+        return {
+            'days_remaining': None,
+            'warning_level': WARNING_LEVEL_UNKNOWN,
+            'warning_label': WARNING_LABELS[WARNING_LEVEL_UNKNOWN],
+        }
+    if today_dt is None:
+        today_dt, _ = get_today()
+    try:
+        expiry_dt = datetime.strptime(expiry_date_str, '%Y-%m-%d')
+        days_remaining = (expiry_dt - today_dt).days
+    except (ValueError, TypeError):
+        return {
+            'days_remaining': None,
+            'warning_level': WARNING_LEVEL_UNKNOWN,
+            'warning_label': WARNING_LABELS[WARNING_LEVEL_UNKNOWN],
+        }
+    if days_remaining <= 0:
+        level = WARNING_LEVEL_EXPIRED
+    elif days_remaining <= EXPIRY_CRITICAL_DAYS:
+        level = WARNING_LEVEL_CRITICAL
+    elif days_remaining <= EXPIRY_WARNING_DAYS:
+        level = WARNING_LEVEL_WARNING
+    else:
+        level = WARNING_LEVEL_NORMAL
+    return {
+        'days_remaining': days_remaining,
+        'warning_level': level,
+        'warning_label': WARNING_LABELS[level],
+    }
+
+
+def build_sales_date_filter(period, date_str):
+    if period == 'day':
+        return "DATE(operation_time) = ?", date_str
+    elif period == 'week':
+        return "strftime('%Y-%W', operation_time) = ?", date_str
+    elif period == 'month':
+        return "strftime('%Y-%m', operation_time) = ?", date_str
+    return "DATE(operation_time) = ?", date_str
+
 
 def get_db():
     db = getattr(g, '_database', None)
@@ -501,21 +576,9 @@ def get_sales_summary():
     date = request.args.get('date', '')
 
     if not date:
-        date = datetime.now().strftime('%Y-%m-%d')
+        _, date = get_today()
 
-    if period == 'day':
-        date_filter = "DATE(operation_time) = ?"
-        date_param = date
-    elif period == 'week':
-        date_filter = "strftime('%Y-%W', operation_time) = ?"
-        date_param = date
-    elif period == 'month':
-        date_filter = "strftime('%Y-%m', operation_time) = ?"
-        date_param = date
-    else:
-        period = 'day'
-        date_filter = "DATE(operation_time) = ?"
-        date_param = date
+    date_filter, date_param = build_sales_date_filter(period, date)
 
     summary = db.execute(f'''
         SELECT 
@@ -601,9 +664,9 @@ def get_inventory_value():
     ''')
     row = cursor.fetchone()
 
-    today = datetime.now().strftime('%Y-%m-%d')
-    one_month = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
-    three_months = (datetime.now() + timedelta(days=90)).strftime('%Y-%m-%d')
+    thresholds = get_expiry_thresholds()
+    one_month = thresholds['critical_date']
+    three_months = thresholds['warning_date']
 
     expiry_cursor = db.execute('''
         SELECT 
@@ -632,9 +695,8 @@ def get_expiry_warning():
     db = get_db()
     days = int(request.args.get('days', 90))
 
-    today = datetime.now()
-    today_str = today.strftime('%Y-%m-%d')
-    limit_date = (today + timedelta(days=days)).strftime('%Y-%m-%d')
+    today_dt, today_str = get_today()
+    limit_date = (today_dt + timedelta(days=days)).strftime('%Y-%m-%d')
 
     cursor = db.execute('''
         SELECT 
@@ -661,28 +723,8 @@ def get_expiry_warning():
     result = []
     for row in rows:
         row_dict = dict(row)
-        if row_dict['expiry_date']:
-            expiry_dt = datetime.strptime(row_dict['expiry_date'], '%Y-%m-%d')
-            days_remaining = (expiry_dt - today).days
-            row_dict['days_remaining'] = days_remaining
-
-            if days_remaining <= 0:
-                row_dict['warning_level'] = 'expired'
-                row_dict['warning_label'] = '已过期'
-            elif days_remaining <= 30:
-                row_dict['warning_level'] = 'critical'
-                row_dict['warning_label'] = '临期(1个月内)'
-            elif days_remaining <= 90:
-                row_dict['warning_level'] = 'warning'
-                row_dict['warning_label'] = '近效期(3个月内)'
-            else:
-                row_dict['warning_level'] = 'normal'
-                row_dict['warning_label'] = '正常'
-        else:
-            row_dict['days_remaining'] = None
-            row_dict['warning_level'] = 'unknown'
-            row_dict['warning_label'] = '未知'
-
+        expiry_info = calc_expiry_info(row_dict.get('expiry_date'), today_dt)
+        row_dict.update(expiry_info)
         result.append(row_dict)
 
     return jsonify(result)

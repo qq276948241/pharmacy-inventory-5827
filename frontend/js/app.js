@@ -23,6 +23,106 @@ async function apiPost(url, data = {}) {
     return result;
 }
 
+const EXPIRY_CRITICAL_DAYS = 30;
+const EXPIRY_WARNING_DAYS = 90;
+
+const EXPIRY_BG_COLORS = {
+    'expired': '#fff1f0',
+    'critical': '#fff7e6',
+    'warning': '#fffbe6'
+};
+
+const EXPIRY_TEXT_CLASSES = {
+    'expired': 'text-red',
+    'critical': 'text-red',
+    'warning': 'text-orange'
+};
+
+const EXPIRY_BADGE_CLASSES = {
+    'expired': 'badge-danger',
+    'critical': 'badge-danger',
+    'warning': 'badge-warning'
+};
+
+const WARNING_LABELS = {
+    'expired': '已过期',
+    'critical': '临期(1个月内)',
+    'warning': '近效期(3个月内)',
+    'normal': '正常',
+    'unknown': '未知'
+};
+
+function formatDateStr(d) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getToday() {
+    return formatDateStr(new Date());
+}
+
+function getWeekNumber(d) {
+    const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
+    const pastDaysOfYear = (d - firstDayOfYear) / 86400000;
+    return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+}
+
+function shiftDate(dateStr, period, delta) {
+    const d = new Date(dateStr);
+    if (period === 'day') {
+        d.setDate(d.getDate() + delta);
+    } else if (period === 'week') {
+        d.setDate(d.getDate() + delta * 7);
+    } else if (period === 'month') {
+        d.setMonth(d.getMonth() + delta);
+    }
+    return formatDateStr(d);
+}
+
+function buildPeriodDateParam(dateStr, period) {
+    if (period === 'week') {
+        const d = new Date(dateStr);
+        const year = d.getFullYear();
+        const week = getWeekNumber(d);
+        return `${year}-${String(week).padStart(2, '0')}`;
+    } else if (period === 'month') {
+        return dateStr.substring(0, 7);
+    }
+    return dateStr;
+}
+
+function calcDaysRemaining(expiryDateStr) {
+    if (!expiryDateStr) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiry = new Date(expiryDateStr);
+    expiry.setHours(0, 0, 0, 0);
+    return Math.floor((expiry - today) / (1000 * 60 * 60 * 24));
+}
+
+function getExpiryWarningLevel(expiryDateStr) {
+    const days = calcDaysRemaining(expiryDateStr);
+    if (days === null) return { level: 'unknown', label: WARNING_LABELS['unknown'], days_remaining: null };
+    if (days <= 0) return { level: 'expired', label: WARNING_LABELS['expired'], days_remaining: days };
+    if (days <= EXPIRY_CRITICAL_DAYS) return { level: 'critical', label: WARNING_LABELS['critical'], days_remaining: days };
+    if (days <= EXPIRY_WARNING_DAYS) return { level: 'warning', label: WARNING_LABELS['warning'], days_remaining: days };
+    return { level: 'normal', label: WARNING_LABELS['normal'], days_remaining: days };
+}
+
+function getExpiryBgColor(level) {
+    return EXPIRY_BG_COLORS[level] || '';
+}
+
+function getExpiryTextClass(level) {
+    return EXPIRY_TEXT_CLASSES[level] || '';
+}
+
+function getExpiryBadgeClass(level) {
+    return EXPIRY_BADGE_CLASSES[level] || '';
+}
+
 // ========== 药品目录页面 ==========
 const MedicineList = {
     template: `
@@ -464,7 +564,7 @@ const StockIn = {
         return {
             medicineOptions, stockInList, searchKeyword,
             stockInForm, page, perPage, total, totalPages,
-            submitStockIn, changePage
+            submitStockIn, changePage, loadStockInList
         };
     }
 };
@@ -698,11 +798,6 @@ const Sales = {
         const changePage = (p) => {
             page.value = p;
             loadSalesList();
-        };
-
-        const getToday = () => {
-            const d = new Date();
-            return d.toISOString().split('T')[0];
         };
 
         onMounted(() => {
@@ -1016,33 +1111,6 @@ const StockWarning = {
             }, 0);
         });
 
-        const getExpiryBgColor = (level) => {
-            const colors = {
-                'expired': '#fff1f0',
-                'critical': '#fff7e6',
-                'warning': '#fffbe6'
-            };
-            return colors[level] || '';
-        };
-
-        const getExpiryTextClass = (level) => {
-            const classes = {
-                'expired': 'text-red',
-                'critical': 'text-red',
-                'warning': 'text-orange'
-            };
-            return classes[level] || '';
-        };
-
-        const getExpiryBadgeClass = (level) => {
-            const classes = {
-                'expired': 'badge-danger',
-                'critical': 'badge-danger',
-                'warning': 'badge-warning'
-            };
-            return classes[level] || '';
-        };
-
         const loadStats = async () => {
             try {
                 const data = await apiGet('/statistics/inventory-value');
@@ -1308,23 +1376,9 @@ const Statistics = {
             return '¥' + (summary.value.total_amount / summary.value.order_num).toFixed(2);
         });
 
-        const getToday = () => {
-            const d = new Date();
-            return d.toISOString().split('T')[0];
-        };
-
         const loadData = async () => {
             try {
-                let dateParam = selectedDate.value;
-                if (period.value === 'week') {
-                    const d = new Date(selectedDate.value);
-                    const year = d.getFullYear();
-                    const week = getWeekNumber(d);
-                    dateParam = `${year}-${String(week).padStart(2, '0')}`;
-                } else if (period.value === 'month') {
-                    dateParam = selectedDate.value.substring(0, 7);
-                }
-
+                const dateParam = buildPeriodDateParam(selectedDate.value, period.value);
                 const data = await apiGet('/statistics/sales-summary', {
                     period: period.value,
                     date: dateParam
@@ -1337,12 +1391,6 @@ const Statistics = {
                 topMedicines.value = data.top_medicines || [];
                 dailySales.value = data.daily_sales || [];
             } catch (e) {}
-        };
-
-        const getWeekNumber = (d) => {
-            const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
-            const pastDaysOfYear = (d - firstDayOfYear) / 86400000;
-            return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
         };
 
         const loadInventoryStats = async () => {
@@ -1358,27 +1406,11 @@ const Statistics = {
         };
 
         const goPrev = () => {
-            const d = new Date(selectedDate.value);
-            if (period.value === 'day') {
-                d.setDate(d.getDate() - 1);
-            } else if (period.value === 'week') {
-                d.setDate(d.getDate() - 7);
-            } else {
-                d.setMonth(d.getMonth() - 1);
-            }
-            selectedDate.value = d.toISOString().split('T')[0];
+            selectedDate.value = shiftDate(selectedDate.value, period.value, -1);
         };
 
         const goNext = () => {
-            const d = new Date(selectedDate.value);
-            if (period.value === 'day') {
-                d.setDate(d.getDate() + 1);
-            } else if (period.value === 'week') {
-                d.setDate(d.getDate() + 7);
-            } else {
-                d.setMonth(d.getMonth() + 1);
-            }
-            selectedDate.value = d.toISOString().split('T')[0];
+            selectedDate.value = shiftDate(selectedDate.value, period.value, 1);
         };
 
         const goToday = () => {
