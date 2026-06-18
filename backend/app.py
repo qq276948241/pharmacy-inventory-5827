@@ -30,7 +30,8 @@ WARNING_LABELS = {
 
 def get_today():
     today = datetime.now()
-    return today, today.strftime('%Y-%m-%d')
+    today_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    return today_date, today.strftime('%Y-%m-%d')
 
 
 def get_expiry_thresholds(today_dt=None):
@@ -408,6 +409,11 @@ def create_stock_in():
     if not medicine:
         return jsonify({'error': '药品不存在'}), 404
 
+    if expiry_date:
+        expiry_info = calc_expiry_info(expiry_date)
+        if expiry_info['warning_level'] == WARNING_LEVEL_EXPIRED:
+            return jsonify({'error': f'该批次有效期已过期，无法入库'}), 400
+
     db.execute('''
         INSERT INTO stock_in (medicine_id, quantity, unit_price, operator, remark, batch_no, expiry_date)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -526,6 +532,7 @@ def create_sale():
         order_no = f'X{order_date}{order_count:03d}'
 
         total_amount = 0
+        today_dt, today_str = get_today()
 
         for item in items:
             medicine_id = item.get('medicine_id')
@@ -541,6 +548,27 @@ def create_sale():
 
             if medicine['stock'] < quantity:
                 raise ValueError(f"药品 {medicine['name']} 库存不足，当前库存: {medicine['stock']}")
+
+            batch_count = db.execute(
+                'SELECT COUNT(*) as cnt FROM inventory_batches WHERE medicine_id = ? AND quantity > 0',
+                (medicine_id,)
+            ).fetchone()['cnt']
+
+            if batch_count > 0:
+                valid_qty_row = db.execute('''
+                    SELECT SUM(quantity) as valid_qty
+                    FROM inventory_batches
+                    WHERE medicine_id = ? 
+                      AND quantity > 0
+                      AND expiry_date IS NOT NULL
+                      AND expiry_date >= ?
+                ''', (medicine_id, today_str)).fetchone()
+                valid_qty = valid_qty_row['valid_qty'] or 0
+                if valid_qty < quantity:
+                    if valid_qty == 0:
+                        raise ValueError(f"药品 {medicine['name']} 已全部过期，无法销售")
+                    else:
+                        raise ValueError(f"药品 {medicine['name']} 有效库存不足，有效库存: {valid_qty} {medicine['unit']}")
 
             total_price = unit_price * quantity
             total_amount += total_price
@@ -665,28 +693,54 @@ def get_inventory_value():
     row = cursor.fetchone()
 
     thresholds = get_expiry_thresholds()
+    today_str = thresholds['today_str']
     one_month = thresholds['critical_date']
     three_months = thresholds['warning_date']
 
     expiry_cursor = db.execute('''
         SELECT 
-            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_1month,
-            SUM(CASE WHEN expiry_date <= ? AND expiry_date > ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_3month,
-            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_1month_qty,
-            SUM(CASE WHEN expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_3month_qty
+            SUM(CASE WHEN expiry_date < ? AND quantity > 0 THEN 1 ELSE 0 END) as expired_count,
+            SUM(CASE WHEN expiry_date < ? AND quantity > 0 THEN quantity ELSE 0 END) as expired_qty,
+            SUM(CASE WHEN expiry_date >= ? AND expiry_date <= ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_1month,
+            SUM(CASE WHEN expiry_date > ? AND expiry_date <= ? AND quantity > 0 THEN 1 ELSE 0 END) as expiry_3month_only,
+            SUM(CASE WHEN expiry_date >= ? AND expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_1month_qty,
+            SUM(CASE WHEN expiry_date > ? AND expiry_date <= ? AND quantity > 0 THEN quantity ELSE 0 END) as expiry_3month_only_qty
         FROM inventory_batches
-    ''', (one_month, three_months, one_month, one_month, three_months))
+    ''', (today_str, today_str,
+          today_str, one_month,
+          one_month, three_months,
+          today_str, one_month,
+          one_month, three_months))
     expiry_row = expiry_cursor.fetchone()
+
+    expired_qty = expiry_row['expired_qty'] or 0
+    expiry_1month_count = expiry_row['expiry_1month'] or 0
+    expiry_3month_only_count = expiry_row['expiry_3month_only'] or 0
+    expiry_3month_count = expiry_1month_count + expiry_3month_only_count
+    expiry_1month_qty = expiry_row['expiry_1month_qty'] or 0
+    expiry_3month_qty = expiry_1month_qty + (expiry_row['expiry_3month_only_qty'] or 0)
+    expired_value = 0
+    if expired_qty > 0:
+        expired_value_row = db.execute('''
+            SELECT SUM(ib.quantity * m.price) as expired_value
+            FROM inventory_batches ib
+            LEFT JOIN medicines m ON ib.medicine_id = m.id
+            WHERE ib.expiry_date < ? AND ib.quantity > 0
+        ''', (today_str,)).fetchone()
+        expired_value = expired_value_row['expired_value'] or 0
 
     return jsonify({
         'medicine_count': row['medicine_count'] or 0,
         'total_stock': row['total_stock'] or 0,
         'total_value': round(row['total_value'] or 0, 2),
         'low_stock_count': row['low_stock_count'] or 0,
-        'expiry_1month_count': expiry_row['expiry_1month'] or 0,
-        'expiry_1month_qty': expiry_row['expiry_1month_qty'] or 0,
-        'expiry_3month_count': (expiry_row['expiry_1month'] or 0) + (expiry_row['expiry_3month'] or 0),
-        'expiry_3month_qty': expiry_row['expiry_3month_qty'] or 0
+        'expired_count': expiry_row['expired_count'] or 0,
+        'expired_qty': expired_qty,
+        'expired_value': round(expired_value, 2),
+        'expiry_1month_count': expiry_1month_count,
+        'expiry_1month_qty': expiry_1month_qty,
+        'expiry_3month_count': expiry_3month_count,
+        'expiry_3month_qty': expiry_3month_qty
     })
 
 
